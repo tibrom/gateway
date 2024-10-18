@@ -1,0 +1,10 @@
+[package]
+name = "gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+futures = "0.3.31"
+futures-util = "0.3.31"
+tokio = { version = "1.40.0", features = ["full"] }
+tokio-tungstenite = "0.24.0"
