@@ -1,45 +1,12 @@
 use tokio::task::JoinHandle;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{accept_async, connect_async};
 use futures_util::{StreamExt, SinkExt};
 use tokio::net::TcpStream;
 
 
-
-async fn test_echo_server() {
-    let addr = "127.0.0.1:9001";
-    let listener = TcpListener::bind(&addr).await.expect("err 1 Не удалось создать сервер");
-    println!("Тестовый сервер запущен на ws://{}", addr);
-    while let Ok((stream, _)) = listener.accept().await {
-        tokio::spawn(async move {
-            let ws_stream = accept_async(stream)
-                .await
-                .expect("err 2 Ошибка при установлении WebSocket соединения");
-            println!("Новое WebSocket соединение с эхо сервером установлено");
-
-            let (mut write, mut read) = ws_stream.split();
-
-            while let Some(message) = read.next().await {
-                match message {
-                    Ok(msg) => {
-                        println!("cообщение получено");
-                        if msg.is_text() || msg.is_binary() {
-                            write.send(msg).await.expect("err 3 Ошибка при отправке сообщения");
-                        } else if msg.is_close() {
-                            println!("Соединение закрыто");
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        println!("err 4 Ошибка получения сообщения: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
-    }
-}
 
 
 
@@ -57,10 +24,13 @@ async fn trafick_manager(stream: TcpStream, service_url: String) -> JoinHandle<(
             .await
             .expect("err 8 Ошибка при установлении WebSocket соединения c склиентом");
         println!("Новое WebSocket соединение с клиентом установлено");
-
+        let mut request = service_url.into_client_request().expect("Invalid URL");
+        request.headers_mut().insert("Sec-WebSocket-Protocol", "graphql-ws".parse().unwrap());
+        
+        let (mut server_ws_stream, _) = connect_async(request).await.expect("Ошибка при подключении к Hasura");
         let (mut client_write, mut client_read) = client_ws_stream.split();
 
-        let (mut server_ws_stream, _) = connect_async(&service_url).await.expect("err 9 Ошибка при подключении к hasura");
+        //let (mut server_ws_stream, _) = connect_async(&service_url).await.expect("err 9 Ошибка при подключении к hasura");
 
         let (mut server_write, mut server_read) = server_ws_stream.split();
 
@@ -97,7 +67,7 @@ async fn trafick_manager(stream: TcpStream, service_url: String) -> JoinHandle<(
                     match srvmsg {
                         Ok(msg) => {
                             match msg {
-                                Message::Close( _) => {
+                                Message::Close(_) => {
                                     if let Err(e) = client_write.send(msg).await {
                                         println!("err 13 Ошибка отправки клиенту: {}", e);
                                     }
@@ -127,19 +97,15 @@ async fn trafick_manager(stream: TcpStream, service_url: String) -> JoinHandle<(
 
 #[tokio::main]
 async fn main() {
-    let service_url = "ws://127.0.0.1:9001";
+    let service_url = "ws://localhost:8080/v1/graphql";
     let server_addr = "127.0.0.1:9005";
-    let server = tokio::spawn(async {
-        test_echo_server().await;
-    });
+    
     
     let _ = proxy_server(server_addr, service_url).await;
     
     
 
-    if let Err(e) = server.await {
-        println!("Ошибка при выполнении задачи: {}", e);
-    }
+    
 }
 
 

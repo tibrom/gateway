@@ -9,6 +9,9 @@ services:
       POSTGRES_DB: test_bd
     ports:
       - "5432:5432"
+    networks:
+      - testnetwork
+
   hasura:
     image: hasura/graphql-engine:v2.0.10
     ports:
@@ -16,5 +19,11 @@ services:
     depends_on:
       - postgres
     environment:
-      HASURA_GRAPHQL_DATABASE_URL: postgresql://root:root@database:5432/test_bd
+      HASURA_GRAPHQL_DATABASE_URL: postgresql://root:root@postgres:5432/test_bd  # Изменено
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+    networks:
+      - testnetwork
+
+networks:
+  testnetwork:
+    driver: bridge

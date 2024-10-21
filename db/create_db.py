@@ -3,7 +3,7 @@ from databases import Database
 from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer
 
 
-DATABASE_URL = "postgresql://root:root@database:5432/test_bd"
+DATABASE_URL = "postgresql://root:root@localhost:5432/test_bd"
 
 
 database = Database(DATABASE_URL)
