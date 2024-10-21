@@ -10,27 +10,29 @@ use tokio::net::TcpStream;
 
 
 
-async fn proxy_server(server_addr: &str, service_url:&str) {
+async fn proxy_server(server_addr: &str, service_url:&str, usehadars:bool) {
     let listener = TcpListener::bind(&server_addr).await.expect("err 7 Не удалось создать сервер");
     while let Ok((stream, _)) = listener.accept().await {
-        _ = trafick_manager(stream, service_url.to_string()).await;
+        _ = trafick_manager(stream, service_url.to_string(), usehadars).await;
     }
 }
 
-async fn trafick_manager(stream: TcpStream, service_url: String) -> JoinHandle<()> {
+async fn trafick_manager(stream: TcpStream, service_url: String, usehadars: bool) -> JoinHandle<()> {
     //let server_url = "ws://127.0.0.1:9001";
     let process_control = tokio::spawn(async move {
         let client_ws_stream = accept_async(stream)
             .await
             .expect("err 8 Ошибка при установлении WebSocket соединения c склиентом");
         println!("Новое WebSocket соединение с клиентом установлено");
-        let mut request = service_url.into_client_request().expect("Invalid URL");
-        request.headers_mut().insert("Sec-WebSocket-Protocol", "graphql-ws".parse().unwrap());
-        
-        let (mut server_ws_stream, _) = connect_async(request).await.expect("Ошибка при подключении к Hasura");
         let (mut client_write, mut client_read) = client_ws_stream.split();
 
-        //let (mut server_ws_stream, _) = connect_async(&service_url).await.expect("err 9 Ошибка при подключении к hasura");
+        let (mut server_ws_stream, _) = if usehadars {
+            let mut request = service_url.into_client_request().expect("Invalid URL");
+            request.headers_mut().insert("Sec-WebSocket-Protocol", "graphql-ws".parse().unwrap());
+            connect_async(request).await.expect("Ошибка при подключении к Hasura")
+        } else {
+            connect_async(&service_url).await.expect("err 9 Ошибка при подключении к hasura")
+        };
 
         let (mut server_write, mut server_read) = server_ws_stream.split();
 
@@ -101,7 +103,7 @@ async fn main() {
     let server_addr = "127.0.0.1:9005";
     
     
-    let _ = proxy_server(server_addr, service_url).await;
+    let _ = proxy_server(server_addr, service_url, true).await;
     
     
 
@@ -177,7 +179,7 @@ mod test {
 
       
         let _proxy_server = tokio::spawn(async {
-            proxy_server(server_addr, service_url).await;
+            proxy_server(server_addr, service_url, false).await;
         });
 
         
