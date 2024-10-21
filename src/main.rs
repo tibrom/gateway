@@ -1,76 +1,35 @@
 use futures::future::ok;
+use futures::stream::SplitSink;
+use tokio::task::JoinHandle;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::{accept_async, connect_async};
 use futures_util::{StreamExt, SinkExt};
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::MaybeTlsStream;
+use tokio::net::TcpStream;
 
-const INPUT: &str = "127.0.0.1:9001";
+const INPUT: &str = "127.0.0.1:9005";
 const OUTPUT: &str = "127.0.0.1:9001";
 
-
-
-#[tokio::main]
-async fn main() {
-    
+async fn test_echo_server() {
     let addr = "127.0.0.1:9001";
     let listener = TcpListener::bind(&addr).await.expect("Не удалось создать сервер");
-    println!("WebSocket сервер запущен на ws://{}", addr);
-
-    // Обрабатываем каждое новое соединение
+    println!("Тестовый сервер запущен на ws://{}", addr);
     while let Ok((stream, _)) = listener.accept().await {
         tokio::spawn(async move {
-            // Устанавливаем асинхронное WebSocket соединение
             let ws_stream = accept_async(stream)
                 .await
                 .expect("Ошибка при установлении WebSocket соединения");
-            println!("Новое WebSocket соединение установлено");
+            println!("Новое WebSocket соединение с эхо сервером установлено");
 
-            // Разделяем поток на передающий и принимающий
             let (mut write, mut read) = ws_stream.split();
-            loop {
-                let message = read.next().await;
-                match message {
-                    Some(res_msg) => {
-                        match res_msg {
-                            Ok(msg) => {
-                                match msg {
-                                    Message::Text(text) => {
-                                        println!("Received a text message: {}", text);
-                                    }
-                                    Message::Binary(data) => {
-                                        println!("Received binary data: {:?}", data);
-                                    }
-                                    Message::Ping(ping_data) => {
-                                        println!("Received ping: {:?}", ping_data);
-                                    }
-                                    Message::Pong(pong_data) => {
-                                        println!("Received pong: {:?}", pong_data);
-                                    }
-                                    Message::Close(close_frame) => {
-                                        println!("Received close message: {:?}", close_frame);
-                                    }
-                                    _ => {
-                                        println!("Received an unknown type of message");
-                                    }
-                                }
-                            }
-                            Err(msg) => {
 
-                            }
-                        }
-                    }
-                    _ => {
-
-                    }
-                }
-            }
-
-            // Чтение сообщений
             while let Some(message) = read.next().await {
                 match message {
                     Ok(msg) => {
+                        println!("cообщение получено");
                         if msg.is_text() || msg.is_binary() {
-                            // Отправляем полученное сообщение обратно клиенту
                             write.send(msg).await.expect("Ошибка при отправке сообщения");
                         } else if msg.is_close() {
                             println!("Соединение закрыто");
@@ -84,5 +43,100 @@ async fn main() {
                 }
             }
         });
+    }
+}
+
+async fn test_sender_to_ws(messages: Vec<Message>, url: &str) {
+    let (mut server_ws_stream, _) = connect_async(url).await.expect("Ошибка при подключении к hasura");
+    let (mut server_write, mut server_read) = server_ws_stream.split();
+    for msg in messages {
+        server_write.send(msg).await.expect("Не удалось отправть тестовое сообщение");
+    }
+}
+
+async fn server() {
+    let addr = INPUT;
+    let listener = TcpListener::bind(&addr).await.expect("Не удалось создать сервер");
+    while let Ok((stream, _)) = listener.accept().await {
+        trafick_manager(stream).await;
+    }
+}
+
+async fn trafick_manager(stream: TcpStream) {
+    let server_url = "ws://127.0.0.1:9001";
+    let process_control = tokio::spawn(async move {
+        let client_ws_stream = accept_async(stream)
+            .await
+            .expect("Ошибка при установлении WebSocket соединения c склиентом");
+        println!("Новое WebSocket соединение с клиентом установлено");
+
+        let (mut client_write, mut client_read) = client_ws_stream.split();
+
+        let (mut server_ws_stream, _) = connect_async(server_url).await.expect("Ошибка при подключении к hasura");
+
+        let (mut server_write, mut server_read) = server_ws_stream.split();
+
+        loop {
+            tokio::select! {
+                // Чтение сообщения от клиента
+                Some(clmsg) = client_read.next() => {
+                    match clmsg {
+                        Ok(msg) => {
+                            match msg {
+                                //логика отправки сообщений в Hasura, по умолчанию отправляем все, дополнительно обрабатываем только закрытие
+                                Message::Close( _) => {
+                                    if let Err(e) = server_write.send(msg).await {
+                                        println!("1 Ошибка отправки на Hasura: {}", e);
+                                    }
+                                    break;
+                                }
+                                _ => {
+                                    if let Err(e) = server_write.send(msg).await {
+                                        println!("2 Ошибка отправки на Hasura: {}", e);
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            
+                        }
+                        Err(e) => {
+                            println!("3 Ошибка получения от клиента: {}", e);
+                            break;
+                        }
+                    }
+                }
+                Some(srvmsg) = server_read.next() => {
+                    match srvmsg {
+                        Ok(msg) => {
+                            if let Err(e) = client_write.send(msg).await {
+                                println!("4 Ошибка отправки на клиент: {}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            println!(" 5Ошибка получения от Нasura: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+}
+
+
+#[tokio::main]
+async fn main() {
+    let test = tokio::spawn(async {
+        test_echo_server().await;
+    });
+    let _ = server().await;
+    
+    
+
+    if let Err(e) = test.await {
+        println!("Ошибка при выполнении задачи: {}", e);
     }
 }
