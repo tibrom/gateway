@@ -1,4 +1,4 @@
 /target
-.venv
-./venv
-venv
+.db/venv
+./db/venv
+db/venv
